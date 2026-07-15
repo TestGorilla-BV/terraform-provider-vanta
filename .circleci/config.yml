@@ -1,0 +1,152 @@
+version: 2.1
+
+orbs:
+  go: circleci/go@3.0.4
+
+executors:
+  go:
+    docker:
+      - image: cimg/go:1.25
+    resource_class: medium
+
+jobs:
+  lint:
+    executor: go
+    steps:
+      - checkout
+      - go/mod-download-cached
+      - run:
+          name: go vet
+          command: go vet ./...
+      - run:
+          name: gofmt check
+          command: |
+            if [ -n "$(gofmt -l .)" ]; then
+              echo "gofmt found unformatted files:"
+              gofmt -l .
+              exit 1
+            fi
+
+  test:
+    executor: go
+    steps:
+      - checkout
+      - go/mod-download-cached
+      - go/with-cache:
+          build: true
+          steps:
+            - run:
+                name: go build
+                command: go build ./...
+            - run:
+                name: unit tests
+                command: go test -race -timeout 5m ./...
+
+  acceptance:
+    executor: go
+    steps:
+      - checkout
+      - go/mod-download-cached
+      - go/with-cache:
+          build: true
+          steps:
+            - run:
+                name: acceptance tests (in-process mock)
+                environment:
+                  TF_ACC: "1"
+                command: go test -timeout 15m -count=1 ./internal/provider/...
+
+  docs-check:
+    executor: go
+    steps:
+      - checkout
+      - go/mod-download-cached
+      - run:
+          name: prepend ~/bin to PATH for later steps
+          command: |
+            mkdir -p "$HOME/bin"
+            echo 'export PATH="$HOME/bin:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - v1-terraform-1.9.8
+      - run:
+          name: install Terraform if not cached
+          command: |
+            if [ ! -x "$HOME/bin/terraform" ]; then
+              TERRAFORM_VERSION=1.9.8
+              curl -fsSL -o /tmp/terraform.zip \
+                "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+              unzip -q -o /tmp/terraform.zip -d "$HOME/bin"
+            fi
+            terraform version
+      - save_cache:
+          key: v1-terraform-1.9.8
+          paths:
+            - ~/bin/terraform
+      - restore_cache:
+          keys:
+            - v1-tfplugindocs-v0.20.0
+      - run:
+          name: install tfplugindocs if not cached
+          command: |
+            if ! command -v tfplugindocs >/dev/null; then
+              go install github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.20.0
+            fi
+            tfplugindocs --version || true
+      - save_cache:
+          key: v1-tfplugindocs-v0.20.0
+          paths:
+            - ~/go/bin/tfplugindocs
+      - run:
+          name: regenerate docs
+          command: tfplugindocs generate --provider-name vanta
+      - run:
+          name: fail on drift
+          command: |
+            if [ -n "$(git status --porcelain docs/)" ]; then
+              echo "docs/ is out of date; run 'make docs' and commit."
+              git --no-pager diff docs/
+              exit 1
+            fi
+
+  release:
+    executor: go
+    steps:
+      - checkout
+      - go/mod-download-cached
+      - run:
+          name: import GPG key
+          # GPG_PRIVATE_KEY: ASCII-armored, base64-encoded private key.
+          # GPG_FINGERPRINT: long-form fingerprint (40-hex) registered at registry.terraform.io.
+          # GPG_PASSPHRASE:  passphrase for the key (empty string if none).
+          command: |
+            mkdir -p ~/.gnupg
+            chmod 700 ~/.gnupg
+            echo "allow-loopback-pinentry" > ~/.gnupg/gpg-agent.conf
+            gpgconf --kill gpg-agent
+            echo "$GPG_PRIVATE_KEY" | base64 -d | gpg --batch --import
+            echo "${GPG_FINGERPRINT}:6:" | gpg --import-ownertrust
+            gpg --list-secret-keys --keyid-format=long
+      - go/install-goreleaser:
+          version: v2.4.5
+      - run:
+          name: GoReleaser
+          command: goreleaser release --clean
+
+workflows:
+  ci:
+    jobs:
+      - lint
+      - test
+      - acceptance
+      - docs-check
+  release:
+    jobs:
+      - release:
+          context:
+            - terraform-registry-release  # holds GPG_*, GITHUB_TOKEN
+          filters:
+            tags:
+              only: /^v\d+\.\d+\.\d+(-[\w.]+)?$/
+            branches:
+              ignore: /.*/
