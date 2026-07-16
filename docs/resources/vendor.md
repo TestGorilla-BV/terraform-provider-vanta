@@ -14,14 +14,23 @@ A managed third-party vendor. Optional attributes that are removed from configur
 
 ```terraform
 resource "vanta_vendor" "acme" {
-  name                = "Acme Inc"
-  website_url         = "https://www.acme.com"
-  services_provided   = "Cloud infrastructure"
+  name                  = "Acme Inc"
+  website_url           = "https://www.acme.com"
+  services_provided     = "Cloud infrastructure"
   account_manager_name  = "Jane Doe"
   account_manager_email = "jane@acme.com"
-  status              = "MANAGED"
-  inherent_risk_level = "HIGH"
-  vendor_headquarters = "USA"
+  status                = "MANAGED"
+  inherent_risk_level   = "HIGH"
+  vendor_headquarters   = "USA"
+  authentication_method = "GOOGLE_WORKSPACE"
+
+  contract_amount = {
+    amount   = 9375
+    currency = "USD"
+  }
+
+  # Archive the vendor in Vanta on destroy instead of deleting it.
+  archive_on_destroy = true
 }
 ```
 
@@ -37,8 +46,11 @@ resource "vanta_vendor" "acme" {
 - `account_manager_email` (String) Email of the external account manager.
 - `account_manager_name` (String) Name of the external account manager.
 - `additional_notes` (String) Miscellaneous notes about the vendor.
+- `archive_on_destroy` (Boolean) When `true`, destroying this resource archives the vendor (sets its status to `ARCHIVED`) instead of deleting it from Vanta. Defaults to `false` (hard delete). This attribute is local to Terraform and is not read back from the API.
+- `authentication_method` (String) The vendor's authentication method. One of `AUTH_0`, `AZURE_AD`, `GOOGLE_WORKSPACE`, `O_AUTH`, `O365`, `OKTA`, `ONE_LOGIN`, `OWA`, `SSO`, `USERNAME_PASSWORD`, `OTHER`.
 - `business_owner_user_id` (String) Vanta user ID of the vendor's business owner.
 - `category` (String) The vendor's category.
+- `contract_amount` (Attributes) The vendor's contract amount. (see [below for nested schema](#nestedatt--contract_amount))
 - `contract_renewal_date` (String) Contract renewal date (RFC 3339).
 - `contract_start_date` (String) Contract start date (RFC 3339).
 - `contract_termination_date` (String) Contract termination date (RFC 3339).
@@ -56,6 +68,14 @@ resource "vanta_vendor" "acme" {
 - `id` (String) Vendor ID.
 - `last_security_review_completion_date` (String) The most recent security review completion date.
 - `next_security_review_due_date` (String) The next security review due date.
+
+<a id="nestedatt--contract_amount"></a>
+### Nested Schema for `contract_amount`
+
+Required:
+
+- `amount` (Number) The numeric contract amount.
+- `currency` (String) ISO 4217 currency code, e.g. `USD` or `EUR`.
 
 ## Import
 

@@ -28,6 +28,10 @@ var (
 var (
 	vendorStatuses = []string{"MANAGED", "ARCHIVED", "IN_PROCUREMENT"}
 	riskLevels     = []string{"CRITICAL", "HIGH", "MEDIUM", "LOW", "UNSCORED"}
+	authMethods    = []string{
+		"AUTH_0", "AZURE_AD", "GOOGLE_WORKSPACE", "O_AUTH", "O365", "OKTA",
+		"ONE_LOGIN", "OWA", "SSO", "USERNAME_PASSWORD", "OTHER",
+	}
 )
 
 type vendorResource struct {
@@ -35,27 +39,35 @@ type vendorResource struct {
 }
 
 type vendorResourceModel struct {
-	ID                      types.String `tfsdk:"id"`
-	Name                    types.String `tfsdk:"name"`
-	WebsiteURL              types.String `tfsdk:"website_url"`
-	AccountManagerName      types.String `tfsdk:"account_manager_name"`
-	AccountManagerEmail     types.String `tfsdk:"account_manager_email"`
-	ServicesProvided        types.String `tfsdk:"services_provided"`
-	AdditionalNotes         types.String `tfsdk:"additional_notes"`
-	SecurityOwnerUserID     types.String `tfsdk:"security_owner_user_id"`
-	BusinessOwnerUserID     types.String `tfsdk:"business_owner_user_id"`
-	ContractStartDate       types.String `tfsdk:"contract_start_date"`
-	ContractRenewalDate     types.String `tfsdk:"contract_renewal_date"`
-	ContractTerminationDate types.String `tfsdk:"contract_termination_date"`
-	Category                types.String `tfsdk:"category"`
-	VendorHeadquarters      types.String `tfsdk:"vendor_headquarters"`
-	IsVisibleToAuditors     types.Bool   `tfsdk:"is_visible_to_auditors"`
-	Status                  types.String `tfsdk:"status"`
-	InherentRiskLevel       types.String `tfsdk:"inherent_risk_level"`
-	ResidualRiskLevel       types.String `tfsdk:"residual_risk_level"`
+	ID                      types.String         `tfsdk:"id"`
+	Name                    types.String         `tfsdk:"name"`
+	WebsiteURL              types.String         `tfsdk:"website_url"`
+	AccountManagerName      types.String         `tfsdk:"account_manager_name"`
+	AccountManagerEmail     types.String         `tfsdk:"account_manager_email"`
+	ServicesProvided        types.String         `tfsdk:"services_provided"`
+	AdditionalNotes         types.String         `tfsdk:"additional_notes"`
+	SecurityOwnerUserID     types.String         `tfsdk:"security_owner_user_id"`
+	BusinessOwnerUserID     types.String         `tfsdk:"business_owner_user_id"`
+	ContractStartDate       types.String         `tfsdk:"contract_start_date"`
+	ContractRenewalDate     types.String         `tfsdk:"contract_renewal_date"`
+	ContractTerminationDate types.String         `tfsdk:"contract_termination_date"`
+	Category                types.String         `tfsdk:"category"`
+	VendorHeadquarters      types.String         `tfsdk:"vendor_headquarters"`
+	IsVisibleToAuditors     types.Bool           `tfsdk:"is_visible_to_auditors"`
+	Status                  types.String         `tfsdk:"status"`
+	InherentRiskLevel       types.String         `tfsdk:"inherent_risk_level"`
+	ResidualRiskLevel       types.String         `tfsdk:"residual_risk_level"`
+	AuthenticationMethod    types.String         `tfsdk:"authentication_method"`
+	ContractAmount          *contractAmountModel `tfsdk:"contract_amount"`
+	ArchiveOnDestroy        types.Bool           `tfsdk:"archive_on_destroy"`
 	// Computed, read-only.
 	NextSecurityReviewDueDate        types.String `tfsdk:"next_security_review_due_date"`
 	LastSecurityReviewCompletionDate types.String `tfsdk:"last_security_review_completion_date"`
+}
+
+type contractAmountModel struct {
+	Amount   types.Float64 `tfsdk:"amount"`
+	Currency types.String  `tfsdk:"currency"`
 }
 
 func NewVendorResource() resource.Resource {
@@ -122,6 +134,34 @@ func (r *vendorResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Validators:    []validator.String{stringvalidator.OneOf(riskLevels...)},
 				PlanModifiers: []planmodifier.String{stringplanUseStateForUnknown()},
 			},
+			"authentication_method": schema.StringAttribute{
+				Optional: true,
+				Description: "The vendor's authentication method. One of " +
+					"`AUTH_0`, `AZURE_AD`, `GOOGLE_WORKSPACE`, `O_AUTH`, `O365`, `OKTA`, " +
+					"`ONE_LOGIN`, `OWA`, `SSO`, `USERNAME_PASSWORD`, `OTHER`.",
+				Validators: []validator.String{stringvalidator.OneOf(authMethods...)},
+			},
+			"contract_amount": schema.SingleNestedAttribute{
+				Optional:    true,
+				Description: "The vendor's contract amount.",
+				Attributes: map[string]schema.Attribute{
+					"amount": schema.Float64Attribute{
+						Required:    true,
+						Description: "The numeric contract amount.",
+					},
+					"currency": schema.StringAttribute{
+						Required:    true,
+						Description: "ISO 4217 currency code, e.g. `USD` or `EUR`.",
+					},
+				},
+			},
+			"archive_on_destroy": schema.BoolAttribute{
+				Optional: true,
+				Description: "When `true`, destroying this resource archives the vendor " +
+					"(sets its status to `ARCHIVED`) instead of deleting it from Vanta. " +
+					"Defaults to `false` (hard delete). This attribute is local to " +
+					"Terraform and is not read back from the API.",
+			},
 			"next_security_review_due_date": schema.StringAttribute{
 				Computed:      true,
 				Description:   "The next security review due date.",
@@ -160,7 +200,7 @@ func (r *vendorResource) Create(ctx context.Context, req resource.CreateRequest,
 		resp.Diagnostics.AddError("Failed to create vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, plan.ArchiveOnDestroy, &resp.State)...)
 }
 
 func (r *vendorResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -179,7 +219,7 @@ func (r *vendorResource) Read(ctx context.Context, req resource.ReadRequest, res
 		resp.Diagnostics.AddError("Failed to read vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, state.ArchiveOnDestroy, &resp.State)...)
 }
 
 func (r *vendorResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -195,13 +235,20 @@ func (r *vendorResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Failed to update vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, plan.ArchiveOnDestroy, &resp.State)...)
 }
 
 func (r *vendorResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state vendorResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state.ArchiveOnDestroy.ValueBool() {
+		archived := "ARCHIVED"
+		if _, err := r.client.UpdateVendor(ctx, state.ID.ValueString(), client.VendorInput{Status: &archived}); err != nil && !client.IsNotFound(err) {
+			resp.Diagnostics.AddError("Failed to archive vendor", err.Error())
+		}
 		return
 	}
 	if err := r.client.DeleteVendor(ctx, state.ID.ValueString()); err != nil && !client.IsNotFound(err) {
@@ -232,7 +279,20 @@ func (r *vendorResource) ImportState(ctx context.Context, req resource.ImportSta
 }
 
 func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
+	var authDetails *client.VendorAuthDetailsInput
+	if method := stringPtrFromTF(m.AuthenticationMethod); method != nil {
+		authDetails = &client.VendorAuthDetailsInput{Method: method}
+	}
+	var contractAmount *client.VendorContractAmount
+	if m.ContractAmount != nil {
+		contractAmount = &client.VendorContractAmount{
+			Amount:   m.ContractAmount.Amount.ValueFloat64(),
+			Currency: m.ContractAmount.Currency.ValueString(),
+		}
+	}
 	return client.VendorInput{
+		AuthDetails:             authDetails,
+		ContractAmount:          contractAmount,
 		Name:                    stringPtrFromTF(m.Name),
 		WebsiteURL:              stringPtrFromTF(m.WebsiteURL),
 		AccountManagerName:      stringPtrFromTF(m.AccountManagerName),
@@ -253,8 +313,18 @@ func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
 	}
 }
 
-func writeVendorState(ctx context.Context, v *client.Vendor, state *tfsdk.State) diag.Diagnostics {
+func writeVendorState(ctx context.Context, v *client.Vendor, archiveOnDestroy types.Bool, state *tfsdk.State) diag.Diagnostics {
+	var contractAmount *contractAmountModel
+	if v.ContractAmount != nil {
+		contractAmount = &contractAmountModel{
+			Amount:   types.Float64Value(v.ContractAmount.Amount),
+			Currency: types.StringValue(v.ContractAmount.Currency),
+		}
+	}
 	m := vendorResourceModel{
+		AuthenticationMethod:             stringFromEmpty(v.AuthenticationMethod()),
+		ContractAmount:                   contractAmount,
+		ArchiveOnDestroy:                 archiveOnDestroy,
 		ID:                               types.StringValue(v.ID),
 		Name:                             types.StringValue(v.Name),
 		WebsiteURL:                       stringFromPtr(v.WebsiteURL),

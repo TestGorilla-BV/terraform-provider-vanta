@@ -127,6 +127,28 @@ func (s *Server) handleToken(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// VendorCount returns the number of vendors currently stored. Test helper.
+func (s *Server) VendorCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.vendors)
+}
+
+// VendorCountByStatus returns the number of stored vendors with the given
+// status. Test helper.
+func (s *Server) VendorCountByStatus(status string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, v := range s.vendors {
+		st, _ := vendorResponse(v)["status"].(string)
+		if st == status {
+			n++
+		}
+	}
+	return n
+}
+
 // ----- Vendors -----
 
 func (s *Server) handleCreateVendor(w http.ResponseWriter, r *http.Request) {
