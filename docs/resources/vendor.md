@@ -54,7 +54,7 @@ resource "vanta_vendor" "acme" {
 - `authentication_method` (String) The vendor's authentication method. One of `AUTH_0`, `AZURE_AD`, `GOOGLE_WORKSPACE`, `O_AUTH`, `O365`, `OKTA`, `ONE_LOGIN`, `OWA`, `SSO`, `USERNAME_PASSWORD`, `OTHER`.
 - `business_owner_user_id` (String) Vanta user ID of the vendor's business owner.
 - `category` (String) The vendor's category.
-- `contract_amount` (Attributes) The vendor's contract amount. (see [below for nested schema](#nestedatt--contract_amount))
+- `contract_amount` (Attributes) The vendor's contract amount. When omitted, the vendor's existing amount in Vanta is left untouched. (see [below for nested schema](#nestedatt--contract_amount))
 - `contract_renewal_date` (String) Contract renewal date (RFC 3339).
 - `contract_start_date` (String) Contract start date (RFC 3339).
 - `contract_termination_date` (String) Contract termination date (RFC 3339).
