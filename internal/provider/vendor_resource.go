@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -42,36 +43,41 @@ type vendorResource struct {
 }
 
 type vendorResourceModel struct {
-	ID                      types.String         `tfsdk:"id"`
-	Name                    types.String         `tfsdk:"name"`
-	WebsiteURL              types.String         `tfsdk:"website_url"`
-	AccountManagerName      types.String         `tfsdk:"account_manager_name"`
-	AccountManagerEmail     types.String         `tfsdk:"account_manager_email"`
-	ServicesProvided        types.String         `tfsdk:"services_provided"`
-	AdditionalNotes         types.String         `tfsdk:"additional_notes"`
-	SecurityOwnerUserID     types.String         `tfsdk:"security_owner_user_id"`
-	BusinessOwnerUserID     types.String         `tfsdk:"business_owner_user_id"`
-	ContractStartDate       types.String         `tfsdk:"contract_start_date"`
-	ContractRenewalDate     types.String         `tfsdk:"contract_renewal_date"`
-	ContractTerminationDate types.String         `tfsdk:"contract_termination_date"`
-	Category                types.String         `tfsdk:"category"`
-	VendorHeadquarters      types.String         `tfsdk:"vendor_headquarters"`
-	IsVisibleToAuditors     types.Bool           `tfsdk:"is_visible_to_auditors"`
-	Status                  types.String         `tfsdk:"status"`
-	InherentRiskLevel       types.String         `tfsdk:"inherent_risk_level"`
-	ResidualRiskLevel       types.String         `tfsdk:"residual_risk_level"`
-	AuthenticationMethod    types.String         `tfsdk:"authentication_method"`
-	ContractAmount          *contractAmountModel `tfsdk:"contract_amount"`
-	ArchiveOnDestroy        types.Bool           `tfsdk:"archive_on_destroy"`
-	AdoptExisting           types.Bool           `tfsdk:"adopt_existing"`
+	ID                      types.String `tfsdk:"id"`
+	Name                    types.String `tfsdk:"name"`
+	WebsiteURL              types.String `tfsdk:"website_url"`
+	AccountManagerName      types.String `tfsdk:"account_manager_name"`
+	AccountManagerEmail     types.String `tfsdk:"account_manager_email"`
+	ServicesProvided        types.String `tfsdk:"services_provided"`
+	AdditionalNotes         types.String `tfsdk:"additional_notes"`
+	SecurityOwnerUserID     types.String `tfsdk:"security_owner_user_id"`
+	BusinessOwnerUserID     types.String `tfsdk:"business_owner_user_id"`
+	ContractStartDate       types.String `tfsdk:"contract_start_date"`
+	ContractRenewalDate     types.String `tfsdk:"contract_renewal_date"`
+	ContractTerminationDate types.String `tfsdk:"contract_termination_date"`
+	Category                types.String `tfsdk:"category"`
+	VendorHeadquarters      types.String `tfsdk:"vendor_headquarters"`
+	IsVisibleToAuditors     types.Bool   `tfsdk:"is_visible_to_auditors"`
+	Status                  types.String `tfsdk:"status"`
+	InherentRiskLevel       types.String `tfsdk:"inherent_risk_level"`
+	ResidualRiskLevel       types.String `tfsdk:"residual_risk_level"`
+	AuthenticationMethod    types.String `tfsdk:"authentication_method"`
+	// ContractAmount is a types.Object (not a *struct) so it can hold the
+	// "unknown" value that Optional+Computed produces on create; a plain struct
+	// pointer cannot, and the framework would fail to decode the plan.
+	ContractAmount   types.Object `tfsdk:"contract_amount"`
+	ArchiveOnDestroy types.Bool   `tfsdk:"archive_on_destroy"`
+	AdoptExisting    types.Bool   `tfsdk:"adopt_existing"`
 	// Computed, read-only.
 	NextSecurityReviewDueDate        types.String `tfsdk:"next_security_review_due_date"`
 	LastSecurityReviewCompletionDate types.String `tfsdk:"last_security_review_completion_date"`
 }
 
-type contractAmountModel struct {
-	Amount   types.Float64 `tfsdk:"amount"`
-	Currency types.String  `tfsdk:"currency"`
+// contractAmountAttrTypes is the attribute schema of the contract_amount object,
+// used to build/decode its types.Object value.
+var contractAmountAttrTypes = map[string]attr.Type{
+	"amount":   types.Float64Type,
+	"currency": types.StringType,
 }
 
 func NewVendorResource() resource.Resource {
@@ -83,8 +89,18 @@ func (r *vendorResource) Metadata(_ context.Context, req resource.MetadataReques
 }
 
 func (r *vendorResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	optString := func(desc string) schema.StringAttribute {
-		return schema.StringAttribute{Optional: true, Description: desc}
+	// optComputedString is for string attributes the API also owns: marking
+	// them Optional+Computed means "if config omits it, keep whatever Vanta
+	// has" — without Computed, a value Vanta holds but config leaves unset makes
+	// Terraform reject the apply as an inconsistent result (planned null vs
+	// applied non-null) and churn a perpetual `-> null` diff.
+	optComputedString := func(desc string) schema.StringAttribute {
+		return schema.StringAttribute{
+			Optional:      true,
+			Computed:      true,
+			Description:   desc,
+			PlanModifiers: []planmodifier.String{stringplanUseStateForUnknown()},
+		}
 	}
 	resp.Schema = schema.Schema{
 		Description: "A managed third-party vendor. Optional attributes that are removed from " +
@@ -99,18 +115,18 @@ func (r *vendorResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 				Required:    true,
 				Description: "Display name of the vendor.",
 			},
-			"website_url":               optString("The vendor's website URL."),
-			"account_manager_name":      optString("Name of the external account manager."),
-			"account_manager_email":     optString("Email of the external account manager."),
-			"services_provided":         optString("Services provided by the vendor."),
-			"additional_notes":          optString("Miscellaneous notes about the vendor."),
-			"security_owner_user_id":    optString("Vanta user ID of the vendor's security owner."),
-			"business_owner_user_id":    optString("Vanta user ID of the vendor's business owner."),
-			"contract_start_date":       optString("Contract start date (RFC 3339)."),
-			"contract_renewal_date":     optString("Contract renewal date (RFC 3339)."),
-			"contract_termination_date": optString("Contract termination date (RFC 3339)."),
-			"category":                  optString("The vendor's category."),
-			"vendor_headquarters":       optString("ISO 3166-1 alpha-3 country code of the vendor's HQ (e.g. `USA`)."),
+			"website_url":               optComputedString("The vendor's website URL."),
+			"account_manager_name":      optComputedString("Name of the external account manager."),
+			"account_manager_email":     optComputedString("Email of the external account manager."),
+			"services_provided":         optComputedString("Services provided by the vendor."),
+			"additional_notes":          optComputedString("Miscellaneous notes about the vendor."),
+			"security_owner_user_id":    optComputedString("Vanta user ID of the vendor's security owner."),
+			"business_owner_user_id":    optComputedString("Vanta user ID of the vendor's business owner."),
+			"contract_start_date":       optComputedString("Contract start date (RFC 3339)."),
+			"contract_renewal_date":     optComputedString("Contract renewal date (RFC 3339)."),
+			"contract_termination_date": optComputedString("Contract termination date (RFC 3339)."),
+			"category":                  optComputedString("The vendor's category."),
+			"vendor_headquarters":       optComputedString("ISO 3166-1 alpha-3 country code of the vendor's HQ (e.g. `USA`)."),
 			"is_visible_to_auditors": schema.BoolAttribute{
 				Optional:      true,
 				Computed:      true,
@@ -140,14 +156,18 @@ func (r *vendorResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"authentication_method": schema.StringAttribute{
 				Optional: true,
+				Computed: true,
 				Description: "The vendor's authentication method. One of " +
 					"`AUTH_0`, `AZURE_AD`, `GOOGLE_WORKSPACE`, `O_AUTH`, `O365`, `OKTA`, " +
 					"`ONE_LOGIN`, `OWA`, `SSO`, `USERNAME_PASSWORD`, `OTHER`.",
-				Validators: []validator.String{stringvalidator.OneOf(authMethods...)},
+				Validators:    []validator.String{stringvalidator.OneOf(authMethods...)},
+				PlanModifiers: []planmodifier.String{stringplanUseStateForUnknown()},
 			},
 			"contract_amount": schema.SingleNestedAttribute{
-				Optional:    true,
-				Description: "The vendor's contract amount.",
+				Optional:      true,
+				Computed:      true,
+				Description:   "The vendor's contract amount. When omitted, the vendor's existing amount in Vanta is left untouched.",
+				PlanModifiers: []planmodifier.Object{objectplanUseStateForUnknown()},
 				Attributes: map[string]schema.Attribute{
 					"amount": schema.Float64Attribute{
 						Required:    true,
@@ -323,10 +343,13 @@ func vendorInputFromModel(m *vendorResourceModel, vrmEnabled bool) client.Vendor
 		authDetails = &client.VendorAuthDetailsInput{Method: method}
 	}
 	var contractAmount *client.VendorContractAmount
-	if m.ContractAmount != nil {
+	if !m.ContractAmount.IsNull() && !m.ContractAmount.IsUnknown() {
+		attrs := m.ContractAmount.Attributes()
+		amount, _ := attrs["amount"].(types.Float64)
+		currency, _ := attrs["currency"].(types.String)
 		contractAmount = &client.VendorContractAmount{
-			Amount:   m.ContractAmount.Amount.ValueFloat64(),
-			Currency: m.ContractAmount.Currency.ValueString(),
+			Amount:   amount.ValueFloat64(),
+			Currency: currency.ValueString(),
 		}
 	}
 	in := client.VendorInput{
@@ -374,12 +397,15 @@ func vendorWriteErrorDetail(err error) string {
 // prior plan/state so the Terraform-only flags (archive_on_destroy,
 // adopt_existing), which the API never returns, are preserved across reads.
 func writeVendorState(ctx context.Context, v *client.Vendor, local *vendorResourceModel, state *tfsdk.State) diag.Diagnostics {
-	var contractAmount *contractAmountModel
+	var diags diag.Diagnostics
+	contractAmount := types.ObjectNull(contractAmountAttrTypes)
 	if v.ContractAmount != nil {
-		contractAmount = &contractAmountModel{
-			Amount:   types.Float64Value(v.ContractAmount.Amount),
-			Currency: types.StringValue(v.ContractAmount.Currency),
-		}
+		obj, d := types.ObjectValue(contractAmountAttrTypes, map[string]attr.Value{
+			"amount":   types.Float64Value(v.ContractAmount.Amount),
+			"currency": types.StringValue(v.ContractAmount.Currency),
+		})
+		diags.Append(d...)
+		contractAmount = obj
 	}
 	m := vendorResourceModel{
 		AuthenticationMethod:             stringFromEmpty(v.AuthenticationMethod()),
@@ -407,5 +433,6 @@ func writeVendorState(ctx context.Context, v *client.Vendor, local *vendorResour
 		NextSecurityReviewDueDate:        stringFromPtr(v.NextSecurityReviewDueDate),
 		LastSecurityReviewCompletionDate: stringFromPtr(v.LastSecurityReviewCompletionDate),
 	}
-	return state.Set(ctx, &m)
+	diags.Append(state.Set(ctx, &m)...)
+	return diags
 }
