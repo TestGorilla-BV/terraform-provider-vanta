@@ -32,9 +32,29 @@ type Vendor struct {
 	Category                *struct {
 		DisplayName string `json:"displayName"`
 	} `json:"category"`
+	ContractAmount *VendorContractAmount `json:"contractAmount"`
+	AuthDetails    *struct {
+		Method *string `json:"method"`
+	} `json:"authDetails"`
 	// Computed, read-only.
 	NextSecurityReviewDueDate        *string `json:"nextSecurityReviewDueDate"`
 	LastSecurityReviewCompletionDate *string `json:"lastSecurityReviewCompletionDate"`
+}
+
+// VendorContractAmount is the vendor's contract value. Amount is the numeric
+// value; Currency is an ISO 4217 code the API accepts (e.g. USD, EUR).
+type VendorContractAmount struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// AuthenticationMethod returns the vendor's authentication method, or "" if
+// unset.
+func (v *Vendor) AuthenticationMethod() string {
+	if v.AuthDetails == nil || v.AuthDetails.Method == nil {
+		return ""
+	}
+	return *v.AuthDetails.Method
 }
 
 // CategoryDisplayName returns the vendor's category name, or "" if unset.
@@ -48,23 +68,32 @@ func (v *Vendor) CategoryDisplayName() string {
 // VendorInput is the create/update payload. Pointer fields are only serialized
 // when non-nil, so unset attributes are left untouched on PATCH.
 type VendorInput struct {
-	Name                    *string `json:"name,omitempty"`
-	WebsiteURL              *string `json:"websiteUrl,omitempty"`
-	AccountManagerName      *string `json:"accountManagerName,omitempty"`
-	AccountManagerEmail     *string `json:"accountManagerEmail,omitempty"`
-	ServicesProvided        *string `json:"servicesProvided,omitempty"`
-	AdditionalNotes         *string `json:"additionalNotes,omitempty"`
-	SecurityOwnerUserID     *string `json:"securityOwnerUserId,omitempty"`
-	BusinessOwnerUserID     *string `json:"businessOwnerUserId,omitempty"`
-	ContractStartDate       *string `json:"contractStartDate,omitempty"`
-	ContractRenewalDate     *string `json:"contractRenewalDate,omitempty"`
-	ContractTerminationDate *string `json:"contractTerminationDate,omitempty"`
-	IsVisibleToAuditors     *bool   `json:"isVisibleToAuditors,omitempty"`
-	Status                  *string `json:"status,omitempty"`
-	Category                *string `json:"category,omitempty"`
-	InherentRiskLevel       *string `json:"inherentRiskLevel,omitempty"`
-	ResidualRiskLevel       *string `json:"residualRiskLevel,omitempty"`
-	VendorHeadquarters      *string `json:"vendorHeadquarters,omitempty"`
+	Name                    *string                 `json:"name,omitempty"`
+	WebsiteURL              *string                 `json:"websiteUrl,omitempty"`
+	AccountManagerName      *string                 `json:"accountManagerName,omitempty"`
+	AccountManagerEmail     *string                 `json:"accountManagerEmail,omitempty"`
+	ServicesProvided        *string                 `json:"servicesProvided,omitempty"`
+	AdditionalNotes         *string                 `json:"additionalNotes,omitempty"`
+	SecurityOwnerUserID     *string                 `json:"securityOwnerUserId,omitempty"`
+	BusinessOwnerUserID     *string                 `json:"businessOwnerUserId,omitempty"`
+	ContractStartDate       *string                 `json:"contractStartDate,omitempty"`
+	ContractRenewalDate     *string                 `json:"contractRenewalDate,omitempty"`
+	ContractTerminationDate *string                 `json:"contractTerminationDate,omitempty"`
+	IsVisibleToAuditors     *bool                   `json:"isVisibleToAuditors,omitempty"`
+	Status                  *string                 `json:"status,omitempty"`
+	Category                *string                 `json:"category,omitempty"`
+	InherentRiskLevel       *string                 `json:"inherentRiskLevel,omitempty"`
+	ResidualRiskLevel       *string                 `json:"residualRiskLevel,omitempty"`
+	VendorHeadquarters      *string                 `json:"vendorHeadquarters,omitempty"`
+	ContractAmount          *VendorContractAmount   `json:"contractAmount,omitempty"`
+	AuthDetails             *VendorAuthDetailsInput `json:"authDetails,omitempty"`
+}
+
+// VendorAuthDetailsInput is the writable subset of a vendor's authentication
+// details. Only the method is managed here; the API leaves the other auth
+// fields untouched when they are omitted.
+type VendorAuthDetailsInput struct {
+	Method *string `json:"method,omitempty"`
 }
 
 func (c *Client) CreateVendor(ctx context.Context, input VendorInput) (*Vendor, error) {
