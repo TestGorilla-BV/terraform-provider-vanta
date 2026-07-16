@@ -127,6 +127,17 @@ func (s *Server) handleToken(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// SeedVendor inserts a vendor directly into the store (bypassing the API) and
+// returns its assigned ID. Test helper for exercising adoption/import paths.
+func (s *Server) SeedVendor(v map[string]any) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := s.nextResourceID("vendor")
+	v["id"] = id
+	s.vendors[id] = v
+	return id
+}
+
 // VendorCount returns the number of vendors currently stored. Test helper.
 func (s *Server) VendorCount() int {
 	s.mu.Lock()

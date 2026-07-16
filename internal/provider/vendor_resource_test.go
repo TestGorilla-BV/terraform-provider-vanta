@@ -75,6 +75,43 @@ resource "vanta_vendor" "acme" {
 	})
 }
 
+// TestAccVendorResource_adoptExisting verifies that creating a resource with
+// adopt_existing = true adopts a same-named vendor already present in Vanta and
+// updates it in place, rather than creating a duplicate.
+func TestAccVendorResource_adoptExisting(t *testing.T) {
+	srv := withMockServer(t)
+	existingID := srv.SeedVendor(map[string]any{
+		"name":              "Preexisting Vendor",
+		"status":            "MANAGED",
+		"inherentRiskLevel": "LOW",
+	})
+
+	runResourceTest(t, []resource.TestStep{
+		{
+			Config: providerConfig + `
+resource "vanta_vendor" "adopted" {
+  name                = "Preexisting Vendor"
+  adopt_existing      = true
+  inherent_risk_level = "HIGH"
+}
+`,
+			Check: resource.ComposeAggregateTestCheckFunc(
+				// Adopted the existing vendor's ID rather than minting a new one.
+				resource.TestCheckResourceAttr("vanta_vendor.adopted", "id", existingID),
+				resource.TestCheckResourceAttr("vanta_vendor.adopted", "inherent_risk_level", "HIGH"),
+				resource.TestCheckResourceAttr("vanta_vendor.adopted", "adopt_existing", "true"),
+				// No duplicate was created.
+				func(_ *terraform.State) error {
+					if n := srv.VendorCount(); n != 1 {
+						return fmt.Errorf("expected 1 vendor after adoption, got %d", n)
+					}
+					return nil
+				},
+			),
+		},
+	})
+}
+
 // TestAccVendorResource_archiveOnDestroy verifies that destroying a vendor with
 // archive_on_destroy = true archives it (status ARCHIVED) rather than deleting
 // it, leaving the vendor present in Vanta.

@@ -29,7 +29,10 @@ resource "vanta_vendor" "acme" {
     currency = "USD"
   }
 
-  # Archive the vendor in Vanta on destroy instead of deleting it.
+  # Adopt a same-named vendor that already exists in Vanta instead of creating
+  # a duplicate (handy for bulk-managing pre-existing vendors without import
+  # blocks), and archive rather than delete on destroy.
+  adopt_existing     = true
   archive_on_destroy = true
 }
 ```
@@ -46,6 +49,7 @@ resource "vanta_vendor" "acme" {
 - `account_manager_email` (String) Email of the external account manager.
 - `account_manager_name` (String) Name of the external account manager.
 - `additional_notes` (String) Miscellaneous notes about the vendor.
+- `adopt_existing` (Boolean) When `true`, creating this resource first looks for an existing vendor with the same `name`; if exactly one is found it is adopted and updated in place instead of creating a duplicate. Use this to bring vendors that already exist in Vanta under Terraform management without per-resource `import` blocks. An ambiguous name (multiple matches) is an error. This attribute is local to Terraform and is not read back from the API.
 - `archive_on_destroy` (Boolean) When `true`, destroying this resource archives the vendor (sets its status to `ARCHIVED`) instead of deleting it from Vanta. Defaults to `false` (hard delete). This attribute is local to Terraform and is not read back from the API.
 - `authentication_method` (String) The vendor's authentication method. One of `AUTH_0`, `AZURE_AD`, `GOOGLE_WORKSPACE`, `O_AUTH`, `O365`, `OKTA`, `ONE_LOGIN`, `OWA`, `SSO`, `USERNAME_PASSWORD`, `OTHER`.
 - `business_owner_user_id` (String) Vanta user ID of the vendor's business owner.

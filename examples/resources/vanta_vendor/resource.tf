@@ -14,6 +14,9 @@ resource "vanta_vendor" "acme" {
     currency = "USD"
   }
 
-  # Archive the vendor in Vanta on destroy instead of deleting it.
+  # Adopt a same-named vendor that already exists in Vanta instead of creating
+  # a duplicate (handy for bulk-managing pre-existing vendors without import
+  # blocks), and archive rather than delete on destroy.
+  adopt_existing     = true
   archive_on_destroy = true
 }

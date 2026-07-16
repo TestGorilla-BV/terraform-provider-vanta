@@ -60,6 +60,7 @@ type vendorResourceModel struct {
 	AuthenticationMethod    types.String         `tfsdk:"authentication_method"`
 	ContractAmount          *contractAmountModel `tfsdk:"contract_amount"`
 	ArchiveOnDestroy        types.Bool           `tfsdk:"archive_on_destroy"`
+	AdoptExisting           types.Bool           `tfsdk:"adopt_existing"`
 	// Computed, read-only.
 	NextSecurityReviewDueDate        types.String `tfsdk:"next_security_review_due_date"`
 	LastSecurityReviewCompletionDate types.String `tfsdk:"last_security_review_completion_date"`
@@ -155,6 +156,15 @@ func (r *vendorResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 					},
 				},
 			},
+			"adopt_existing": schema.BoolAttribute{
+				Optional: true,
+				Description: "When `true`, creating this resource first looks for an existing " +
+					"vendor with the same `name`; if exactly one is found it is adopted and " +
+					"updated in place instead of creating a duplicate. Use this to bring " +
+					"vendors that already exist in Vanta under Terraform management without " +
+					"per-resource `import` blocks. An ambiguous name (multiple matches) is an " +
+					"error. This attribute is local to Terraform and is not read back from the API.",
+			},
 			"archive_on_destroy": schema.BoolAttribute{
 				Optional: true,
 				Description: "When `true`, destroying this resource archives the vendor " +
@@ -195,12 +205,34 @@ func (r *vendorResource) Create(ctx context.Context, req resource.CreateRequest,
 		return
 	}
 
+	// Adopt an existing same-named vendor instead of creating a duplicate, when
+	// requested. This lets callers manage vendors that already exist in Vanta
+	// without authoring a per-resource import block (needed on Terraform < 1.7,
+	// which lacks for_each in import blocks).
+	if plan.AdoptExisting.ValueBool() {
+		existing, err := r.client.GetVendorByName(ctx, plan.Name.ValueString())
+		switch {
+		case err == nil:
+			v, err := r.client.UpdateVendor(ctx, existing.ID, vendorInputFromModel(&plan))
+			if err != nil {
+				resp.Diagnostics.AddError("Failed to adopt existing vendor", err.Error())
+				return
+			}
+			resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
+			return
+		case !client.IsNotFound(err):
+			resp.Diagnostics.AddError("Failed to look up existing vendor by name", err.Error())
+			return
+		}
+		// NotFound falls through to a normal create.
+	}
+
 	v, err := r.client.CreateVendor(ctx, vendorInputFromModel(&plan))
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to create vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, plan.ArchiveOnDestroy, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
 }
 
 func (r *vendorResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -219,7 +251,7 @@ func (r *vendorResource) Read(ctx context.Context, req resource.ReadRequest, res
 		resp.Diagnostics.AddError("Failed to read vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, state.ArchiveOnDestroy, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, &state, &resp.State)...)
 }
 
 func (r *vendorResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -235,7 +267,7 @@ func (r *vendorResource) Update(ctx context.Context, req resource.UpdateRequest,
 		resp.Diagnostics.AddError("Failed to update vendor", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(writeVendorState(ctx, v, plan.ArchiveOnDestroy, &resp.State)...)
+	resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
 }
 
 func (r *vendorResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -313,7 +345,10 @@ func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
 	}
 }
 
-func writeVendorState(ctx context.Context, v *client.Vendor, archiveOnDestroy types.Bool, state *tfsdk.State) diag.Diagnostics {
+// writeVendorState maps an API vendor onto Terraform state. local carries the
+// prior plan/state so the Terraform-only flags (archive_on_destroy,
+// adopt_existing), which the API never returns, are preserved across reads.
+func writeVendorState(ctx context.Context, v *client.Vendor, local *vendorResourceModel, state *tfsdk.State) diag.Diagnostics {
 	var contractAmount *contractAmountModel
 	if v.ContractAmount != nil {
 		contractAmount = &contractAmountModel{
@@ -324,7 +359,8 @@ func writeVendorState(ctx context.Context, v *client.Vendor, archiveOnDestroy ty
 	m := vendorResourceModel{
 		AuthenticationMethod:             stringFromEmpty(v.AuthenticationMethod()),
 		ContractAmount:                   contractAmount,
-		ArchiveOnDestroy:                 archiveOnDestroy,
+		ArchiveOnDestroy:                 local.ArchiveOnDestroy,
+		AdoptExisting:                    local.AdoptExisting,
 		ID:                               types.StringValue(v.ID),
 		Name:                             types.StringValue(v.Name),
 		WebsiteURL:                       stringFromPtr(v.WebsiteURL),
