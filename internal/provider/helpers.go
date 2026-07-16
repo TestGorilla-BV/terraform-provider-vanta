@@ -2,6 +2,7 @@ package provider
 
 import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -18,6 +19,10 @@ func stringplanUseStateForUnknown() planmodifier.String {
 
 func boolplanUseStateForUnknown() planmodifier.Bool {
 	return boolplanmodifier.UseStateForUnknown()
+}
+
+func objectplanUseStateForUnknown() planmodifier.Object {
+	return objectplanmodifier.UseStateForUnknown()
 }
 
 // firstNonEmpty returns the first non-empty string in vals, or "".
