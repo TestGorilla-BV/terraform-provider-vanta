@@ -141,10 +141,33 @@ func (c *Client) ListVendors(ctx context.Context, filter ListVendorsFilter) ([]V
 	return paginate[Vendor](ctx, c, "/vendors", q)
 }
 
+// cachedVendors returns the full vendor list, fetching and caching it on the
+// first call. The cache is shared across concurrent callers so a bulk
+// apply/import resolves every vendor from a single (paginated) list request
+// instead of one request per vendor.
+func (c *Client) cachedVendors(ctx context.Context) ([]Vendor, error) {
+	c.vendorMu.Lock()
+	defer c.vendorMu.Unlock()
+	if c.vendorCached {
+		return c.vendorList, nil
+	}
+	vendors, err := c.ListVendors(ctx, ListVendorsFilter{})
+	if err != nil {
+		return nil, err
+	}
+	c.vendorList = vendors
+	c.vendorCached = true
+	return c.vendorList, nil
+}
+
 // GetVendorByName looks up a single managed vendor by exact name. Returns a
 // NotFound APIError when absent and a generic error when the name is ambiguous.
+//
+// It matches against the cached full vendor list (see cachedVendors) rather
+// than issuing a per-name list request, so many name lookups during one
+// apply/import don't hammer the API.
 func (c *Client) GetVendorByName(ctx context.Context, name string) (*Vendor, error) {
-	vendors, err := c.ListVendors(ctx, ListVendorsFilter{Name: name})
+	vendors, err := c.cachedVendors(ctx)
 	if err != nil {
 		return nil, err
 	}

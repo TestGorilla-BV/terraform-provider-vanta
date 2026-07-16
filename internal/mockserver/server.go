@@ -24,6 +24,17 @@ type Server struct {
 	people     []map[string]any
 	frameworks []map[string]any
 	tests      []map[string]any
+
+	listVendorsCalls int // number of GET /v1/vendors (list) requests served
+}
+
+// ListVendorsCalls returns how many list-vendors requests have been served.
+// Test helper for asserting the client's vendor-name cache avoids per-vendor
+// list calls.
+func (s *Server) ListVendorsCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.listVendorsCalls
 }
 
 // New starts a mock server and returns it. Call srv.Close when done.
@@ -179,6 +190,7 @@ func (s *Server) handleCreateVendor(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListVendors(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.listVendorsCalls++
 	nameFilter := strings.ToLower(r.URL.Query().Get("name"))
 	statuses := map[string]bool{}
 	for _, st := range r.URL.Query()["statusMatchesAny"] {

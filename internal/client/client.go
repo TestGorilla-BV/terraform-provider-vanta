@@ -68,6 +68,14 @@ type Client struct {
 	tokenMu     sync.Mutex
 	accessToken string
 	tokenExpiry time.Time
+
+	// Vendor list cache for name lookups. Populated lazily on the first
+	// GetVendorByName call and reused, so a bulk apply/import that resolves many
+	// vendors by name issues a single (paginated) list request instead of one
+	// per vendor. See GetVendorByName.
+	vendorMu     sync.Mutex
+	vendorList   []Vendor
+	vendorCached bool
 }
 
 type Options struct {
@@ -135,7 +143,7 @@ func New(opts Options) (*Client, error) {
 	}
 	maxRetries := opts.MaxRetries
 	if maxRetries == 0 {
-		maxRetries = 3
+		maxRetries = 5
 	}
 	maxRetryWait := opts.MaxRetryWait
 	if maxRetryWait == 0 {
