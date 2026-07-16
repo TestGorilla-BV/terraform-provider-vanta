@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"os"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -30,7 +31,16 @@ type vantaProviderModel struct {
 	Region       types.String `tfsdk:"region"`
 	BaseURL      types.String `tfsdk:"base_url"`
 	TokenURL     types.String `tfsdk:"token_url"`
+
+	MaxRequestsPerSecond types.Float64 `tfsdk:"max_requests_per_second"`
 }
+
+// defaultMaxRequestsPerSecond paces the client so a bulk apply/import stays
+// under Vanta's rate limit. Terraform fans resource reads/writes out at its
+// configured parallelism (default 10); without pacing that bursts well past
+// the API's limit and trips 429s. Tunable via `max_requests_per_second` or the
+// VANTA_MAX_REQUESTS_PER_SECOND environment variable.
+const defaultMaxRequestsPerSecond = 5.0
 
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
@@ -81,6 +91,12 @@ func (p *VantaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 				Description: "Override the OAuth token URL (e.g. for testing). May be set via VANTA_TOKEN_URL.",
 				Optional:    true,
 			},
+			"max_requests_per_second": schema.Float64Attribute{
+				Description: "Cap the client's request rate to stay under Vanta's API rate limit during " +
+					"bulk applies/imports. Defaults to 5. Set to 0 to disable pacing. May be set via " +
+					"VANTA_MAX_REQUESTS_PER_SECOND.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -121,15 +137,21 @@ func (p *VantaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 		return
 	}
 
+	maxRPS := resolveMaxRequestsPerSecond(data.MaxRequestsPerSecond, os.Getenv("VANTA_MAX_REQUESTS_PER_SECOND"), resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	c, err := client.New(client.Options{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		Scope:        scope,
-		Token:        token,
-		Region:       region,
-		BaseURL:      baseURL,
-		TokenURL:     tokenURL,
-		UserAgent:    "terraform-provider-vanta/" + p.version,
+		ClientID:          clientID,
+		ClientSecret:      clientSecret,
+		Scope:             scope,
+		Token:             token,
+		Region:            region,
+		BaseURL:           baseURL,
+		TokenURL:          tokenURL,
+		UserAgent:         "terraform-provider-vanta/" + p.version,
+		RequestsPerSecond: maxRPS,
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to construct Vanta client", err.Error())
@@ -138,6 +160,31 @@ func (p *VantaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 
 	resp.DataSourceData = c
 	resp.ResourceData = c
+}
+
+// resolveMaxRequestsPerSecond picks the request-rate cap from (in order) the
+// provider config, the VANTA_MAX_REQUESTS_PER_SECOND environment variable, and
+// finally defaultMaxRequestsPerSecond. An explicit 0 (config or env) disables
+// pacing; a negative or unparseable value is a configuration error.
+func resolveMaxRequestsPerSecond(cfg types.Float64, env string, resp *provider.ConfigureResponse) float64 {
+	if !cfg.IsNull() && !cfg.IsUnknown() {
+		v := cfg.ValueFloat64()
+		if v < 0 {
+			resp.Diagnostics.AddAttributeError(path.Root("max_requests_per_second"),
+				"Invalid max_requests_per_second", "Must be zero (disable pacing) or positive.")
+		}
+		return v
+	}
+	if env != "" {
+		v, err := strconv.ParseFloat(env, 64)
+		if err != nil || v < 0 {
+			resp.Diagnostics.AddError("Invalid VANTA_MAX_REQUESTS_PER_SECOND",
+				"Must be a zero or positive number, got "+strconv.Quote(env)+".")
+			return 0
+		}
+		return v
+	}
+	return defaultMaxRequestsPerSecond
 }
 
 func (p *VantaProvider) Resources(_ context.Context) []func() resource.Resource {
