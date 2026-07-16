@@ -32,7 +32,8 @@ type vantaProviderModel struct {
 	BaseURL      types.String `tfsdk:"base_url"`
 	TokenURL     types.String `tfsdk:"token_url"`
 
-	MaxRequestsPerSecond types.Float64 `tfsdk:"max_requests_per_second"`
+	MaxRequestsPerSecond        types.Float64 `tfsdk:"max_requests_per_second"`
+	VendorRiskManagementEnabled types.Bool    `tfsdk:"vendor_risk_management_enabled"`
 }
 
 // defaultMaxRequestsPerSecond paces the client so a bulk apply/import stays
@@ -97,6 +98,14 @@ func (p *VantaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 					"VANTA_MAX_REQUESTS_PER_SECOND.",
 				Optional: true,
 			},
+			"vendor_risk_management_enabled": schema.BoolAttribute{
+				Description: "Whether the Vanta account has the upgraded Vendor Risk Management add-on. " +
+					"When `false` (the default), the `vanta_vendor` resource omits `residual_risk_level`, " +
+					"`is_visible_to_auditors`, and custom fields from writes, which the API otherwise " +
+					"rejects with a 422 on standard accounts. Enable only if your account has the add-on. " +
+					"May be set via VANTA_VENDOR_RISK_MANAGEMENT.",
+				Optional: true,
+			},
 		},
 	}
 }
@@ -141,17 +150,19 @@ func (p *VantaProvider) Configure(ctx context.Context, req provider.ConfigureReq
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	vrmEnabled := resolveBool(data.VendorRiskManagementEnabled, os.Getenv("VANTA_VENDOR_RISK_MANAGEMENT"))
 
 	c, err := client.New(client.Options{
-		ClientID:          clientID,
-		ClientSecret:      clientSecret,
-		Scope:             scope,
-		Token:             token,
-		Region:            region,
-		BaseURL:           baseURL,
-		TokenURL:          tokenURL,
-		UserAgent:         "terraform-provider-vanta/" + p.version,
-		RequestsPerSecond: maxRPS,
+		ClientID:                    clientID,
+		ClientSecret:                clientSecret,
+		Scope:                       scope,
+		Token:                       token,
+		Region:                      region,
+		BaseURL:                     baseURL,
+		TokenURL:                    tokenURL,
+		UserAgent:                   "terraform-provider-vanta/" + p.version,
+		RequestsPerSecond:           maxRPS,
+		VendorRiskManagementEnabled: vrmEnabled,
 	})
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to construct Vanta client", err.Error())
@@ -185,6 +196,17 @@ func resolveMaxRequestsPerSecond(cfg types.Float64, env string, resp *provider.C
 		return v
 	}
 	return defaultMaxRequestsPerSecond
+}
+
+// resolveBool reads a boolean from (in order) the provider config and the given
+// environment variable, defaulting to false. Any env value strconv.ParseBool
+// accepts (1, t, true, ...) enables it; anything else is treated as false.
+func resolveBool(cfg types.Bool, env string) bool {
+	if !cfg.IsNull() && !cfg.IsUnknown() {
+		return cfg.ValueBool()
+	}
+	v, _ := strconv.ParseBool(env)
+	return v
 }
 
 func (p *VantaProvider) Resources(_ context.Context) []func() resource.Resource {

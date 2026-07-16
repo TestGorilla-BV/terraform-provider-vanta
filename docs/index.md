@@ -50,3 +50,4 @@ provider "vanta" {
 - `scope` (String) Space-separated OAuth scopes. Defaults to `vanta-api.all:read vanta-api.all:write`. May be set via VANTA_SCOPE.
 - `token` (String, Sensitive) A pre-obtained bearer token. When set, the client-credentials exchange is skipped. May be set via VANTA_API_TOKEN.
 - `token_url` (String) Override the OAuth token URL (e.g. for testing). May be set via VANTA_TOKEN_URL.
+- `vendor_risk_management_enabled` (Boolean) Whether the Vanta account has the upgraded Vendor Risk Management add-on. When `false` (the default), the `vanta_vendor` resource omits `residual_risk_level`, `is_visible_to_auditors`, and custom fields from writes, which the API otherwise rejects with a 422 on standard accounts. Enable only if your account has the add-on. May be set via VANTA_VENDOR_RISK_MANAGEMENT.

@@ -2,7 +2,10 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -213,9 +216,9 @@ func (r *vendorResource) Create(ctx context.Context, req resource.CreateRequest,
 		existing, err := r.client.GetVendorByName(ctx, plan.Name.ValueString())
 		switch {
 		case err == nil:
-			v, err := r.client.UpdateVendor(ctx, existing.ID, vendorInputFromModel(&plan))
+			v, err := r.client.UpdateVendor(ctx, existing.ID, vendorInputFromModel(&plan, r.client.VendorRiskManagementEnabled()))
 			if err != nil {
-				resp.Diagnostics.AddError("Failed to adopt existing vendor", err.Error())
+				resp.Diagnostics.AddError("Failed to adopt existing vendor", vendorWriteErrorDetail(err))
 				return
 			}
 			resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
@@ -227,9 +230,9 @@ func (r *vendorResource) Create(ctx context.Context, req resource.CreateRequest,
 		// NotFound falls through to a normal create.
 	}
 
-	v, err := r.client.CreateVendor(ctx, vendorInputFromModel(&plan))
+	v, err := r.client.CreateVendor(ctx, vendorInputFromModel(&plan, r.client.VendorRiskManagementEnabled()))
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create vendor", err.Error())
+		resp.Diagnostics.AddError("Failed to create vendor", vendorWriteErrorDetail(err))
 		return
 	}
 	resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
@@ -262,9 +265,9 @@ func (r *vendorResource) Update(ctx context.Context, req resource.UpdateRequest,
 		return
 	}
 
-	v, err := r.client.UpdateVendor(ctx, state.ID.ValueString(), vendorInputFromModel(&plan))
+	v, err := r.client.UpdateVendor(ctx, state.ID.ValueString(), vendorInputFromModel(&plan, r.client.VendorRiskManagementEnabled()))
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update vendor", err.Error())
+		resp.Diagnostics.AddError("Failed to update vendor", vendorWriteErrorDetail(err))
 		return
 	}
 	resp.Diagnostics.Append(writeVendorState(ctx, v, &plan, &resp.State)...)
@@ -310,7 +313,11 @@ func (r *vendorResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), v.ID)...)
 }
 
-func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
+// vendorInputFromModel builds the create/update payload. When vrmEnabled is
+// false, the fields Vanta gates behind the upgraded Vendor Risk Management
+// add-on (residualRiskLevel, visibleToAuditor) are omitted; sending them on a
+// standard account fails the whole write with a 422.
+func vendorInputFromModel(m *vendorResourceModel, vrmEnabled bool) client.VendorInput {
 	var authDetails *client.VendorAuthDetailsInput
 	if method := stringPtrFromTF(m.AuthenticationMethod); method != nil {
 		authDetails = &client.VendorAuthDetailsInput{Method: method}
@@ -322,7 +329,7 @@ func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
 			Currency: m.ContractAmount.Currency.ValueString(),
 		}
 	}
-	return client.VendorInput{
+	in := client.VendorInput{
 		AuthDetails:             authDetails,
 		ContractAmount:          contractAmount,
 		Name:                    stringPtrFromTF(m.Name),
@@ -338,11 +345,29 @@ func vendorInputFromModel(m *vendorResourceModel) client.VendorInput {
 		ContractTerminationDate: stringPtrFromTF(m.ContractTerminationDate),
 		Category:                stringPtrFromTF(m.Category),
 		VendorHeadquarters:      stringPtrFromTF(m.VendorHeadquarters),
-		IsVisibleToAuditors:     boolPtrFromTF(m.IsVisibleToAuditors),
 		Status:                  stringPtrFromTF(m.Status),
 		InherentRiskLevel:       stringPtrFromTF(m.InherentRiskLevel),
-		ResidualRiskLevel:       stringPtrFromTF(m.ResidualRiskLevel),
 	}
+	if vrmEnabled {
+		in.IsVisibleToAuditors = boolPtrFromTF(m.IsVisibleToAuditors)
+		in.ResidualRiskLevel = stringPtrFromTF(m.ResidualRiskLevel)
+	}
+	return in
+}
+
+// vendorWriteErrorDetail augments a vendor write failure with a hint when it is
+// the 422 Vanta returns for accounts lacking the upgraded Vendor Risk
+// Management add-on — the one case where the account's tier, not the config,
+// is at fault.
+func vendorWriteErrorDetail(err error) string {
+	var apiErr *client.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(apiErr.Message, "Vendor Risk Management") {
+		return err.Error() + "\n\nThis Vanta account does not have the upgraded Vendor Risk Management " +
+			"add-on, which is required to set residual_risk_level, is_visible_to_auditors, or custom fields. " +
+			"Leave the provider's vendor_risk_management_enabled unset (the default) so these fields are omitted."
+	}
+	return err.Error()
 }
 
 // writeVendorState maps an API vendor onto Terraform state. local carries the

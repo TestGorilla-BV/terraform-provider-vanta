@@ -72,6 +72,9 @@ type Client struct {
 	rateMu      sync.Mutex
 	nextAllowed time.Time
 
+	// Whether the account has upgraded Vendor Risk Management (see Options).
+	vendorRiskManagementEnabled bool
+
 	// Token cache. A static token short-circuits the exchange.
 	staticToken string
 	tokenMu     sync.Mutex
@@ -117,6 +120,12 @@ type Options struct {
 	// callers. A value <= 0 disables pacing (the default, so tests run at full
 	// speed); the provider sets a sane positive default for real usage.
 	RequestsPerSecond float64
+
+	// VendorRiskManagementEnabled reports whether the Vanta account has the
+	// upgraded Vendor Risk Management add-on. Without it the API rejects writes
+	// that carry residualRiskLevel, visibleToAuditor, or custom fields (422), so
+	// the vendor resource omits those fields when this is false.
+	VendorRiskManagementEnabled bool
 }
 
 func New(opts Options) (*Client, error) {
@@ -169,19 +178,25 @@ func New(opts Options) (*Client, error) {
 	}
 
 	return &Client{
-		httpClient:   &http.Client{Timeout: timeout},
-		baseURL:      base,
-		userAgent:    opts.UserAgent,
-		tokenURL:     tokenURL,
-		clientID:     opts.ClientID,
-		clientSecret: opts.ClientSecret,
-		scope:        scope,
-		maxRetries:   maxRetries,
-		maxRetryWait: maxRetryWait,
-		minInterval:  minInterval,
-		staticToken:  opts.Token,
+		httpClient:                  &http.Client{Timeout: timeout},
+		baseURL:                     base,
+		userAgent:                   opts.UserAgent,
+		tokenURL:                    tokenURL,
+		clientID:                    opts.ClientID,
+		clientSecret:                opts.ClientSecret,
+		scope:                       scope,
+		maxRetries:                  maxRetries,
+		maxRetryWait:                maxRetryWait,
+		minInterval:                 minInterval,
+		vendorRiskManagementEnabled: opts.VendorRiskManagementEnabled,
+		staticToken:                 opts.Token,
 	}, nil
 }
+
+// VendorRiskManagementEnabled reports whether writes may include the
+// residualRiskLevel, visibleToAuditor, and custom-field attributes that Vanta
+// gates behind the upgraded Vendor Risk Management add-on.
+func (c *Client) VendorRiskManagementEnabled() bool { return c.vendorRiskManagementEnabled }
 
 // APIError represents a non-2xx response.
 type APIError struct {
