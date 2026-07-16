@@ -63,6 +63,15 @@ type Client struct {
 	maxRetries   int
 	maxRetryWait time.Duration
 
+	// Client-side request pacing. When minInterval > 0, Do spaces the start of
+	// every request (list pages, per-id reads, writes) by at least minInterval,
+	// shared across all goroutines. This keeps a bulk apply/import — which
+	// Terraform fans out at its configured parallelism — under Vanta's rate
+	// limit instead of relying on 429 retries after the fact. Zero disables it.
+	minInterval time.Duration
+	rateMu      sync.Mutex
+	nextAllowed time.Time
+
 	// Token cache. A static token short-circuits the exchange.
 	staticToken string
 	tokenMu     sync.Mutex
@@ -103,6 +112,11 @@ type Options struct {
 	Timeout      time.Duration
 	MaxRetries   int
 	MaxRetryWait time.Duration
+
+	// RequestsPerSecond caps the client's request rate across all concurrent
+	// callers. A value <= 0 disables pacing (the default, so tests run at full
+	// speed); the provider sets a sane positive default for real usage.
+	RequestsPerSecond float64
 }
 
 func New(opts Options) (*Client, error) {
@@ -149,6 +163,10 @@ func New(opts Options) (*Client, error) {
 	if maxRetryWait == 0 {
 		maxRetryWait = 60 * time.Second
 	}
+	var minInterval time.Duration
+	if opts.RequestsPerSecond > 0 {
+		minInterval = time.Duration(float64(time.Second) / opts.RequestsPerSecond)
+	}
 
 	return &Client{
 		httpClient:   &http.Client{Timeout: timeout},
@@ -158,9 +176,10 @@ func New(opts Options) (*Client, error) {
 		clientID:     opts.ClientID,
 		clientSecret: opts.ClientSecret,
 		scope:        scope,
-		staticToken:  opts.Token,
 		maxRetries:   maxRetries,
 		maxRetryWait: maxRetryWait,
+		minInterval:  minInterval,
+		staticToken:  opts.Token,
 	}, nil
 }
 
@@ -278,6 +297,10 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 	}
 
 	for attempt := 0; ; attempt++ {
+		if err := c.waitRate(ctx); err != nil {
+			return err
+		}
+
 		tok, err := c.token(ctx)
 		if err != nil {
 			return err
@@ -311,7 +334,7 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		}
 
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < c.maxRetries {
-			wait := parseRetryAfter(resp.Header.Get("Retry-After"), c.maxRetryWait)
+			wait := retryWait(resp.Header.Get("Retry-After"), attempt, c.maxRetryWait)
 			select {
 			case <-time.After(wait):
 				continue
@@ -347,6 +370,53 @@ func (c *Client) Do(ctx context.Context, method, path string, query url.Values, 
 		}
 		return nil
 	}
+}
+
+// waitRate blocks until the client's shared rate gate allows another request,
+// spacing successive requests by at least minInterval regardless of how many
+// goroutines call it. It reserves the next slot under rateMu and then sleeps
+// (outside the lock) so callers queue in order without serializing the waits.
+// A cancelled context aborts the wait. It is a no-op when pacing is disabled.
+func (c *Client) waitRate(ctx context.Context) error {
+	if c.minInterval <= 0 {
+		return nil
+	}
+
+	c.rateMu.Lock()
+	now := time.Now()
+	start := c.nextAllowed
+	if start.Before(now) {
+		start = now
+	}
+	c.nextAllowed = start.Add(c.minInterval)
+	c.rateMu.Unlock()
+
+	wait := time.Until(start)
+	if wait <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(wait):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// retryWait picks how long to wait before retrying a 429. It honors a
+// server-supplied Retry-After header when present; otherwise it backs off
+// exponentially (0.5s, 1s, 2s, ...) so a burst that overruns the rate gate
+// still converges instead of hammering with a fixed 1s delay. The result is
+// clamped to maxWait.
+func retryWait(retryAfter string, attempt int, maxWait time.Duration) time.Duration {
+	if retryAfter != "" {
+		return parseRetryAfter(retryAfter, maxWait)
+	}
+	wait := 500 * time.Millisecond << attempt
+	if wait > maxWait {
+		return maxWait
+	}
+	return wait
 }
 
 // pageInfo mirrors the cursor metadata Vanta returns on every list endpoint.
