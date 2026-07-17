@@ -37,11 +37,13 @@ type vantaProviderModel struct {
 }
 
 // defaultMaxRequestsPerSecond paces the client so a bulk apply/import stays
-// under Vanta's rate limit. Terraform fans resource reads/writes out at its
+// under Vanta's documented rate limit for Manage Vanta endpoints: 50 requests
+// per minute (~0.83/s). Terraform fans resource reads/writes out at its
 // configured parallelism (default 10); without pacing that bursts well past
-// the API's limit and trips 429s. Tunable via `max_requests_per_second` or the
+// the limit and trips 429s. The default is set just under 50/min to leave
+// headroom for retries. Tunable via `max_requests_per_second` or the
 // VANTA_MAX_REQUESTS_PER_SECOND environment variable.
-const defaultMaxRequestsPerSecond = 5.0
+const defaultMaxRequestsPerSecond = 45.0 / 60.0 // 45/min
 
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
@@ -93,8 +95,9 @@ func (p *VantaProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp
 				Optional:    true,
 			},
 			"max_requests_per_second": schema.Float64Attribute{
-				Description: "Cap the client's request rate to stay under Vanta's API rate limit during " +
-					"bulk applies/imports. Defaults to 5. Set to 0 to disable pacing. May be set via " +
+				Description: "Cap the client's request rate to stay under Vanta's API rate limit " +
+					"(50 requests/minute for Manage Vanta endpoints) during bulk applies/imports. " +
+					"Defaults to 0.75 (45/min). Set to 0 to disable pacing. May be set via " +
 					"VANTA_MAX_REQUESTS_PER_SECOND.",
 				Optional: true,
 			},

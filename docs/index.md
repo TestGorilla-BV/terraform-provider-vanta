@@ -45,7 +45,7 @@ provider "vanta" {
 - `base_url` (String) Override the API base URL (e.g. for testing). May be set via VANTA_BASE_URL.
 - `client_id` (String) OAuth client ID. May be set via the VANTA_CLIENT_ID environment variable. Required unless `token` is set.
 - `client_secret` (String, Sensitive) OAuth client secret. May be set via the VANTA_CLIENT_SECRET environment variable. Required unless `token` is set.
-- `max_requests_per_second` (Number) Cap the client's request rate to stay under Vanta's API rate limit during bulk applies/imports. Defaults to 5. Set to 0 to disable pacing. May be set via VANTA_MAX_REQUESTS_PER_SECOND.
+- `max_requests_per_second` (Number) Cap the client's request rate to stay under Vanta's API rate limit (50 requests/minute for Manage Vanta endpoints) during bulk applies/imports. Defaults to 0.75 (45/min). Set to 0 to disable pacing. May be set via VANTA_MAX_REQUESTS_PER_SECOND.
 - `region` (String) Vanta deployment. One of `us` (commercial) or `gov` (FedRAMP). Defaults to `us`. Ignored when `base_url`/`token_url` are set. May be set via VANTA_REGION.
 - `scope` (String) Space-separated OAuth scopes. Defaults to `vanta-api.all:read vanta-api.all:write`. May be set via VANTA_SCOPE.
 - `token` (String, Sensitive) A pre-obtained bearer token. When set, the client-credentials exchange is skipped. May be set via VANTA_API_TOKEN.
