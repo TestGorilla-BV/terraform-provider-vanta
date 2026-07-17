@@ -265,7 +265,7 @@ func (r *vendorResource) Read(ctx context.Context, req resource.ReadRequest, res
 		return
 	}
 
-	v, err := r.client.GetVendor(ctx, state.ID.ValueString())
+	v, err := r.client.GetVendorFromCache(ctx, state.ID.ValueString())
 	if err != nil {
 		if client.IsNotFound(err) {
 			resp.State.RemoveResource(ctx)
