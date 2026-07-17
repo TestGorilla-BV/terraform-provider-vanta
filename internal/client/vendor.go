@@ -160,6 +160,26 @@ func (c *Client) cachedVendors(ctx context.Context) ([]Vendor, error) {
 	return c.vendorList, nil
 }
 
+// GetVendorFromCache returns a vendor by ID from the cached full list (see
+// cachedVendors), falling back to a direct GET when the ID isn't present — e.g.
+// a vendor created after the cache was populated, or one the default list omits
+// such as an archived vendor. Serving reads from the shared list lets a bulk
+// refresh resolve every vendor from one paginated list request instead of one
+// GET per vendor, which is what keeps a whole-fleet plan under the rate limit.
+// The list returns the same fields as the per-ID endpoint, so no data is lost.
+func (c *Client) GetVendorFromCache(ctx context.Context, id string) (*Vendor, error) {
+	vendors, err := c.cachedVendors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range vendors {
+		if vendors[i].ID == id {
+			return &vendors[i], nil
+		}
+	}
+	return c.GetVendor(ctx, id)
+}
+
 // GetVendorByName looks up a single managed vendor by exact name. Returns a
 // NotFound APIError when absent and a generic error when the name is ambiguous.
 //

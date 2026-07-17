@@ -26,6 +26,7 @@ type Server struct {
 	tests      []map[string]any
 
 	listVendorsCalls int // number of GET /v1/vendors (list) requests served
+	getVendorCalls   int // number of GET /v1/vendors/{id} requests served
 }
 
 // ListVendorsCalls returns how many list-vendors requests have been served.
@@ -35,6 +36,14 @@ func (s *Server) ListVendorsCalls() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.listVendorsCalls
+}
+
+// GetVendorCalls returns how many per-ID get-vendor requests have been served.
+// Test helper for asserting reads are served from the cached list.
+func (s *Server) GetVendorCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getVendorCalls
 }
 
 // New starts a mock server and returns it. Call srv.Close when done.
@@ -219,6 +228,7 @@ func (s *Server) handleListVendors(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetVendor(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.getVendorCalls++
 	v, ok := s.vendors[r.PathValue("id")]
 	if !ok {
 		respondError(w, http.StatusNotFound, "vendor not found")
