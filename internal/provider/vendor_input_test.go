@@ -41,3 +41,22 @@ func TestVendorInputOmitsRiskManagementFieldsWhenDisabled(t *testing.T) {
 		t.Errorf("isVisibleToAuditors should be sent when VRM enabled, got %v", enabled.IsVisibleToAuditors)
 	}
 }
+
+// TestVendorInputOmitsEmptyStrings verifies that an empty-string optional field
+// is omitted from the payload rather than sent as "". Vanta stores some fields
+// (e.g. accountManagerEmail) as "" and validates them as an email on write,
+// rejecting "" with a 422; the empty value must not be echoed back.
+func TestVendorInputOmitsEmptyStrings(t *testing.T) {
+	m := &vendorResourceModel{
+		Name:                types.StringValue("Acme Inc"),
+		AccountManagerEmail: types.StringValue(""), // Vanta returned "" on read
+		WebsiteURL:          types.StringValue("https://acme.example"),
+	}
+	in := vendorInputFromModel(m, false)
+	if in.AccountManagerEmail != nil {
+		t.Errorf("empty accountManagerEmail should be omitted, got %q", *in.AccountManagerEmail)
+	}
+	if in.WebsiteURL == nil || *in.WebsiteURL != "https://acme.example" {
+		t.Errorf("non-empty websiteUrl should be sent, got %v", in.WebsiteURL)
+	}
+}

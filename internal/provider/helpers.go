@@ -35,13 +35,21 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// stringPtrFromTF returns nil for a null/unknown Terraform string, otherwise a
-// pointer to its value.
+// stringPtrFromTF returns nil for a null, unknown, or empty Terraform string,
+// otherwise a pointer to its value. An empty string is treated as "unset" and
+// omitted from the API payload: for the vendor API an empty value is never
+// meaningful, and some fields reject it outright — e.g. accountManagerEmail,
+// which the server validates as the vendor contact email and rejects "" with a
+// 422. This also stops a value the API stores as "" from being echoed back on
+// every update.
 func stringPtrFromTF(s types.String) *string {
 	if s.IsNull() || s.IsUnknown() {
 		return nil
 	}
 	v := s.ValueString()
+	if v == "" {
+		return nil
+	}
 	return &v
 }
 
